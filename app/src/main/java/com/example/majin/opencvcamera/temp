@@ -1,0 +1,525 @@
+
+/**  此处为未使用但是重要的处理代码
+ //private LineSegmentDetector LSD;
+ /private BackgroundSubtractorMOG2 MOG2;
+ //LSD = Imgproc.createLineSegmentDetector(LSD_REFINE_ADV,0.8,0.6,2.0,22.5,0,0.7,1024);
+ //LSD = Imgproc.createLineSegmentDetector();
+ //MOG2 = Video.createBackgroundSubtractorMOG2();
+ //canny边缘绘制
+ //Imgproc.Canny(mTemp,mLast,50,100);
+ //Line Segment Detector 快速线段检测并绘制
+ LSD.detect(mTemp,mLast);
+ //LSD.drawSegments(mRgba,mLast);
+
+ //以下是模拟drawSegments进行画线的操作，从而可以进行筛选
+ int N = mLast.checkVector(4);
+ double LineLength = 0;
+ // Draw segments
+ for(int i = 0; i < N; ++i)
+ {
+ double lines[] = new double[4];
+ lines = mLast.get(i,0);
+ LineLength = sqrt((lines[0] - lines[2])*(lines[0] - lines[2]) + (lines[1] - lines[3])*(lines[1] - lines[3]));
+ if(LineLength>50)
+ line(mRgba,new Point(lines[0]+swid/4,lines[1]),new Point(lines[2]+swid/4,lines[3]),new Scalar(0, 255, 255),1);
+ }
+
+ //轮廓检测并绘制
+ //List<MatOfPoint> contours=new ArrayList<>();
+ //Imgproc.findContours(mTemp, contours, new Mat(), RETR_EXTERNAL, CHAIN_APPROX_NONE);
+ //Imgproc.drawContours(mRgba, contours, -1, new Scalar(0, 0, 255), 2);//在result上绘制轮廓
+
+ //MOG2.apply(mTemp,mLast,0.5);
+ 以上为未使用但是重要的处理代码**/
+
+/**以下为采用LSD方式获取线段来分辨门边缘的算法
+ *
+ *
+ swid = width;
+ shei = height;
+ mRgba = new Mat(height, width, CvType.CV_8UC4);
+ mGray = new Mat(height, width, CvType.CV_8UC4);
+ mLine = new Mat(height, width, CvType.CV_8UC4);
+ mROI = new Mat(height, width, CvType.CV_8UC4);
+ mrect = new Rect(swid/4, 0, swid/2, shei/3);
+ LSD = Imgproc.createLineSegmentDetector();
+**********************************************
+        linecc = 0;
+                fillfull = false;
+                openwidth = false;
+ mRgba = inputFrame.rgba();
+ //mROI= new Mat(mRgba, mrect); //两个方式均可获取ROI，submat似乎效率更高。
+ mROI = mRgba.submat(mrect);
+ Imgproc.cvtColor(mROI, mGray, COLOR_BGR2GRAY);
+ LSD.detect(mGray,mLine);
+
+ //模拟drawSegments
+ int N = mLine.checkVector(4);
+ //double LineLength = 0;
+ double linewidth = 0;
+ double lineheight = 0;
+ // Draw segments
+
+ opencounter[linecc] = 0;
+ closecounter[linecc] = 0;
+
+ for(int i = 0; i < N; ++i)
+ {
+ double lines[] = new double[4];
+ lines = mLine.get(i,0);
+ //LineLength = Math.sqrt((lines[0] - lines[2])*(lines[0] - lines[2]) + (lines[1] - lines[3])*(lines[1] - lines[3]));
+ linewidth = Math.abs(lines[0]-lines[2]);
+ lineheight = Math.abs(lines[1] - lines[3]);
+ if(lineheight>(shei/6)&&(linewidth<swid/8)) {//当检测到符合的线段时，用绿色标示
+ line(mRgba, new Point(lines[0] + swid / 4, lines[1]), new Point(lines[2] + swid / 4, lines[3]), new Scalar(0, 255, 0), 2);
+ opencounter[linecc] += Math.abs(lines[0]-swid/4);
+ closecounter[linecc] += (lines[0]>=(swid/4))?(swid/2-lines[0]):lines[0];
+ //将当前帧中，符合条件的线段起始X坐标与中缝的距离累加入10帧计数器，open值越大，表示门的开度越大，close值越大，表示门趋向关闭。
+ //而当openclose值都偏小的时候，判断门趋于静止。
+ }
+ }
+ DisStrL = String.format("open:%d close: %d", (int)opencounter[linecc],(int)closecounter[linecc]);
+ handler.post(runnableL);
+ //当获取了新的计数器数值后，将前一个计数器数值与整组对比，如果是最大值，且oc差大于阀值，则认为状态成立
+ if(fillfull) {
+ //用蓝色标示一个中间位置缝隙，用以校准。
+ line(mRgba, new Point(swid/2, 0), new Point(swid/2, shei/3), new Scalar(0, 0, 255), 2);
+ double tempo = 0;
+ double tempc = 0;
+ for (int j = 0; j < 10; j++) {
+ if (tempo < opencounter[j]) tempo = opencounter[j];
+ if (tempc < closecounter[j]) tempc = closecounter[j];
+ }
+ if(linecc==0)//前一个open值为最大
+ {
+ if(opencounter[9]-closecounter[9]>swid/8){
+ if(tempo==opencounter[9]){
+ DisStrR = String.format("open %d", (int)(opencounter[9]-closecounter[9]));
+ handler.post(runnableR);
+ openwidth = true;
+ }
+ }
+ if(closecounter[9]-opencounter[9]>swid/8){
+ if(tempc==closecounter[9]){
+ DisStrR = String.format("close %d", (int)(closecounter[9]-opencounter[9]));
+ handler.post(runnableR);
+ }
+ }
+ }
+ else{
+ if(opencounter[linecc]-closecounter[linecc]>swid/8){
+ if(tempo==opencounter[linecc]){
+ DisStrR = String.format("open %d", (int)(opencounter[linecc]-closecounter[linecc]));
+ handler.post(runnableR);
+ openwidth = true;
+ }
+ }
+ if(closecounter[linecc]-opencounter[linecc]>swid/8){
+ if(tempc==closecounter[linecc]){
+ DisStrR = String.format("close %d", (int)(closecounter[linecc]-opencounter[linecc]));
+ handler.post(runnableR);
+ }
+ }
+
+ }
+ }
+ linecc++;//递进10帧计数器下标
+ if(linecc>9){
+ linecc = 0;
+ fillfull = true;
+ }
+
+ return mRgba;//此处必须返回与控件相同分辨率的mat，否则无法显示。
+ **/
+/**以下为线段算法及开关门分辨
+ mRgba = inputFrame.rgba();
+ //mROI= new Mat(mRgba, mrect); //两个方式均可获取ROI，submat似乎效率更高。
+ mROI = mRgba.submat(mrect);
+ Imgproc.cvtColor(mRgba, mGray, COLOR_BGR2GRAY);
+ if(opend&&closed){//已经检测到门开合双态并存储，进入正常检测循环
+ mGray.convertTo(mGray, CvType.CV_32F);
+ double closecom = Imgproc.compareHist(mGray, mclose, Imgproc.CV_COMP_CORREL);
+ double opencom = Imgproc.compareHist(mGray, mopen, Imgproc.CV_COMP_CORREL);
+ DisStrR = String.format("比较值 %d %d", (int)(opencom*1000), (int)(closecom*1000));
+ handler.post(runnableR);
+ if(((closecom<0.5)&&(opencom<0.5))||(Math.abs(closecom-opencom)<0.2)){
+ comcc++;
+ }
+ else{
+ comcc = 0;
+ if(closecom>0.5) {
+ if(closecom>opencom) DisStrL = String.format("当前门关闭");
+ else DisStrL = String.format("门已关闭");
+ }
+ else{
+ if(opencom>closecom) DisStrL = String.format("当前门打开");
+ else DisStrL = String.format("门已打开");
+ }
+
+ handler.post(runnableL);
+ }
+ if(comcc>50){
+ linecc = comcc = 0;
+ fillfull = opend = closed = false;
+ }
+ }
+ else {//尚未完成检测并存储开合双态
+ Imgproc.blur(mGray,mCanny,new Size(3,3));
+ Imgproc.Canny(mCanny,mCanny,50,200);
+ LSD.detect(mCanny, mLine);
+ //模拟drawSegments
+ int N = mLine.checkVector(4);
+ //double LineLength = 0;
+ double linewidth = 0;
+ double lineheight = 0;
+ // Draw segments
+
+ opencounter[linecc] = 0;
+ closecounter[linecc] = 0;
+ leftd = rightd = false;//预留给动态线判断完成后，标示左右门最大开合位置已检测到。
+ for (int i = 0; i < N; ++i) {
+ double lines[] = new double[4];
+ lines = mLine.get(i, 0);
+ //LineLength = Math.sqrt((lines[0] - lines[2])*(lines[0] - lines[2]) + (lines[1] - lines[3])*(lines[1] - lines[3]));
+ linewidth = Math.abs(lines[0] - lines[2]);
+ lineheight = Math.abs(lines[1] - lines[3]);
+ if (lineheight > (shei / 6) && (linewidth < swid / 8)) {//当检测到符合的线段时，用绿色标示
+ line(mRgba, new Point(lines[0] + swid / 4, lines[1]), new Point(lines[2] + swid / 4, lines[3]), new Scalar(0, 255, 0), 2);
+ opencounter[linecc] += Math.abs(lines[0] - swid / 4);
+ closecounter[linecc] += (lines[0] >= (swid / 4)) ? (swid / 2 - lines[0]) : lines[0];
+ //将当前帧中，符合条件的线段起始X坐标与中缝的距离累加入10帧计数器，open值越大，表示门的开度越大，close值越大，表示门趋向关闭。
+ //而当openclose值都偏小的时候，判断门趋于静止。
+ }
+ }
+ DisStrL = String.format("环境改变，重新校准 %d %d", (int) opencounter[linecc], (int) closecounter[linecc]);
+ handler.post(runnableL);
+ //当获取了新的计数器数值后，将前一个计数器数值与整组对比，如果是最大值，且oc差大于阀值，则认为状态成立
+ if (fillfull) {
+ //用蓝色标示一个中间位置缝隙，用以校准。
+ line(mRgba, new Point(swid / 2, 0), new Point(swid / 2, shei / 3), new Scalar(0, 0, 255), 2);
+ double tempfar = 0;
+ double tempnear = 0;
+ for (int j = 0; j < 5; j++) {
+ //从linecc往前倒数五个相邻差的总和，以判断是否趋于静止。
+ if(linecc-j==0) tempnear += opencounter[0]-opencounter[9];
+ else tempnear += (linecc-j<1)?(opencounter[10+linecc-j]-opencounter[9+linecc-j]):(opencounter[linecc-j]-opencounter[linecc-j-1]);
+ //从linecc往前倒数六到十oc差的总和，以判断前序运动是开还是关。
+ tempfar += (linecc-j<5)?(opencounter[5+linecc-j]-closecounter[5+linecc-j]):(opencounter[linecc-j-5]-closecounter[linecc-j-5]);
+ }
+ if(tempnear<20&&tempnear>-20){
+ if(tempfar>10){
+ if((opend==false)&&(closed==false)){
+ //mGray.copyTo(mopen);
+ mGray.convertTo(mopen, CvType.CV_32F);
+ opend = true;
+ }
+ }
+ else if(tempfar<-100) {
+ if((opend)&&(closed==false)){
+ //mGray.copyTo(mclose);
+ mGray.convertTo(mclose, CvType.CV_32F);
+ closed = true;
+ }
+ }
+ }
+ if(opend&&closed) DisStrR = String.format("open close %d %d", (int) (tempnear), (int) (tempfar));
+ else{
+ if(opend) DisStrR = String.format("open %d %d", (int) (tempnear), (int) (tempfar));
+ else if(closed) DisStrR = String.format("close %d %d", (int) (tempnear), (int) (tempfar));
+ else DisStrR = String.format("%d %d", (int) (tempnear), (int) (tempfar));
+ }
+
+ handler.post(runnableR);
+ }
+ linecc++;//递进10帧计数器下标
+ if (linecc > 9) {
+ linecc = 0;
+ fillfull = true;
+ }
+ }**/
+/**获取MatofLine的点
+ if(linecacu) {
+ int N = mLineL.checkVector(1);
+ double linesLR[][][] = new double[2][4][1];
+ // Draw segments
+ for (int i = 0; i < N; ++i) {
+ //L = mLineL.get(i,0,linesLR[0][i]);
+ //R = mLineR.get(i, 0,linesLR[1][i]);
+ linesLR[0][i] = mLineL.get(i,0);
+ linesLR[1][i] = mLineR.get(i,0);
+ //line(mRgba, new Point(lines[0][0], lines[0][1]), new Point(lines[0][2], lines[0][3]), new Scalar(0, 255, 0), 2);
+ //line(mRgba, new Point(lines[1][0], lines[1][1]), new Point(lines[1][2], lines[1][3]), new Scalar(0, 255, 0), 2);
+ }
+ DisStrL = String.format("%g %g %g %g   %g %g %g %g ",linesLR[0][0][0],linesLR[0][1][0],linesLR[0][2][0],linesLR[0][3][0]
+ ,linesLR[1][0][0],linesLR[1][1][0],linesLR[1][2][0],linesLR[1][3][0]);
+ handler.post(runnableL);
+ }
+ **/
+/**采用线性拟合方式获取门边缘
+
+ private void deviation(byte datas[][][][],int vars[][]){
+ //long startTime = System.nanoTime();//计算精确的纳秒时间
+ //long startTime = System.currentTimeMillis();//计算粗略的毫秒时间
+ //linev 代表不同的采样行号
+ for(int linev = 0;linev<linenum;linev++) {
+ //linevc 代表最近的framenum帧的标号
+ for(int pixrows = 0;pixrows<swid/2;pixrows++){
+ int vartotal = 0;//单点数据framenum帧的总和
+ for(int linevc = 0;linevc<framenum;linevc++){
+ vartotal += datas[linevc][linev][pixrows][0];//计算单点数据framenum帧的总和
+ }
+ int varaver = vartotal/framenum;//计算单点数据framenum帧的平均值
+ int varsigma = 0;
+ for(int linevc = 0;linevc<framenum;linevc++){
+ //计算单点与平均值差的平方的framenum帧总和
+ varsigma += (datas[linevc][linev][pixrows][0]-varaver)*(datas[linevc][linev][pixrows][0]-varaver);
+ }
+ vars[linev][pixrows] = (int)Math.sqrt(varsigma/framenum); //计算需要的方差
+ }
+ }
+ //long consumingTime = System.nanoTime() - startTime;//计算精确的纳秒时间
+ //long consumingTime = System.currentTimeMillis() - startTime;//计算粗略的毫秒时间
+
+ //DisStrR = String.format("执行时间：%d ms",(int)consumingTime);
+ //handler.post(runnableR);
+ }
+ private void var2length(int vars[][],int lengths[][],Mat PL,Mat PR,int threshold,int width){
+ //此函数中，注释了MatofPoint方式的数据填充方式，改用手动put数据。
+ //List pointsL = new ArrayList<Point>();
+ //List pointsR = new ArrayList<Point>();
+ for(int rows = 0;rows<linenum;rows++){
+ int leftlength = 0;
+ int rightlength = 0;
+ //Point temppoint;
+ int temppoint[] = new int[2];
+ boolean leftrun,rightrun;
+ leftrun = rightrun= true;
+ //区域验证：假设宽度swid=640 则swid/2 = 320 swid/4 = 160 width = 5 pixs=5~160 wp=0～4
+ //则：左侧var第二下标 第一次计算为155～159 最后一次计算为0～4
+
+ //则：右侧var第二下标 第一次计算为164～160 最后一次计算为319～315
+
+ for(int pixs = width;pixs<=swid/4;pixs++){
+ int ltotal = 0;
+ int rtotal = 0;
+ for(int wp = 0;wp<width;wp++){
+ if(leftrun) ltotal += vars[rows][swid/4-pixs+wp];
+ if(rightrun) rtotal += vars[rows][swid/4+pixs-wp-1];
+ }
+ if(leftrun) leftlength = pixs-width;//当前计算区域右侧边界距离中缝的长度即为右距=左距（pixs）减去宽度
+ if(ltotal>threshold*width) leftrun = false;//如果width宽度中，平均值大于阀值，则左侧探测停止。
+
+ if(rightrun) rightlength = pixs-width-1;//当前计算区域左侧边界距离中缝的长度即为左距=右距（pixs）减去宽度再减1，因为右侧起始点为swid/2+1
+ if(rtotal>threshold*width) rightrun = false;//如果width宽度中，平均值大于阀值，则右侧探测停止
+ if(!(leftrun||rightrun)) break;//如果左右均探测到波动边界，则跳出循环。
+
+ }
+ //speeds[rows][0] = leftlength - lengths[rows][0];//将当前左长度减去上一次计算的长度，即为当前左速度（左长度差/帧）
+ lengths[rows][0] = leftlength;//将当前左长度存入左长度缓存
+ temppoint[0] = swid/2-leftlength-1;
+ temppoint[1] = rows*shei/(linenum*3);
+ mPointL.put(rows,0,temppoint);
+ //temppoint = new Point(swid/2-leftlength-1,rows*shei/(linenum*3));
+ //pointsL.add(temppoint);
+
+ //speeds[rows][1] = rightlength - lengths[rows][1];//将当前右长度减去上一次计算的长度，即为当前右速度（右长度差/帧）
+ lengths[rows][1] = rightlength;//将当前右长度存入长度缓存
+ temppoint[0] = swid/2+rightlength;
+ temppoint[1] = rows*shei/(linenum*3);
+ mPointR.put(rows,0,temppoint);
+ //temppoint = new Point(swid/2+rightlength,rows*shei/(linenum*3));
+ //pointsR.add(temppoint);
+ }
+ //mPointL.fromList(pointsL);
+ //mPointR.fromList(pointsR);
+ }
+ @Override
+ public void onCameraViewStarted(int width, int height) {
+ //统一在此定义初始化参数
+ //width = 640;//USB摄像头需要自定义分辨率（画面宽高）
+ //height = 480;
+ swid = width;//原生摄像头可以自动获取分辨率（画面宽高）
+ shei = height;
+ linenum = 10;//采样线的数量，居中水平横线，宽度为画面一半，纵坐标从top开始，至上方1/3处，均分。平衡性能和效率的参数。
+ framenum = 10;//采样的帧数，同时会根据此值定义缓存数量。平衡性能和效率的参数。尽量为偶数
+ thresvalue = 15;//方差的阀值，超过此值，则判定为实际变化。影响判定的重要参数。
+ widthvalue = 20;//阀值的计算宽度，宽度的像素方差均值大于阀值，则判定为变化。影响判定的重要参数。
+ //参数定义结束
+ LSD = Imgproc.createLineSegmentDetector();
+ mRgba = new Mat(height, width, CvType.CV_8UC4); //原始RGBA四通道图像（携带Alpha透明度信息的PNG图像）
+ mGray = new Mat(height, width, CvType.CV_8UC4); //灰度图像
+ mPointL = new Mat(linenum,1,CvType.CV_32SC2);   //左点阵合成的Mat矩阵，以便FitLine函数拟合
+ mPointR = new Mat(linenum,1,CvType.CV_32SC2);   //右点阵合成的Mat矩阵，以便FitLine函数拟合
+ //经测试，MatofPoint方式填充的点位图与手动put方式填充的点位图输入FitLine后效果一样。
+ //mPointL = new MatOfPoint();
+ //mPointR = new MatOfPoint();
+ mLineL = new Mat();   //左点阵合成的Mat矩阵，以便FitLine函数拟合
+ mLineR = new Mat();   //右点阵合成的Mat矩阵，以便FitLine函数拟合
+
+ framecc = comcc = 0;//初始化帧数计数器和同步计数器
+ fillfull = speedfull = linecacu = false;//初始化填充帧完成标志
+ lines = new byte[framenum][linenum][swid/2][1];//framenum帧缓存 linenum行采样线 画面宽度一半的采样宽度 1个像素*1个字节的采样数据
+ Var = new int[linenum][swid/2];//linenum行采样线的帧之间方差数据，画面一半宽度的采样像素
+ length= new int[linenum][2]; //当前linenum行采样线的中间相对静止区域的长度,两个方向
+ //linenum行采样线，两个方向的静止区域变化速度，具备正负值，正表示增，负表示减(20190107取消速度计算)
+ //Speed = new int[framenum][linenum][2];
+ //startTime = System.currentTimeMillis();//计算粗略的毫秒时间
+ Thread threadvar = new Thread("ThreadVar") {
+ public void run() {
+ while(true) {
+ try {
+ if (fillfull) {
+ int sleeptime = 0;
+ while(comcc==framecc){//等待新的帧存入缓冲区
+ Thread.sleep(1);
+ sleeptime++;
+ }
+ startTime = System.currentTimeMillis();//计算粗略的毫秒时间
+ comcc = framecc;//更新同步标志
+ if(comcc == framenum-1){
+ speedfull = true;//速度数据初始化完毕
+ }
+ deviation(lines, Var);//将lines中的像素数据计算出方差存入Var中。
+ //将Var中的方差数据,根据上一帧长度length数据计算出中间相对阀值threshold的
+ //静止区域(超越宽度width)的增减速度，并将速度数据存入Speed的当前(十帧)的速度数据中。
+ //完成计算后，将length更新为新的数据。
+//20190107 更改为计算中间相对阀值静止的长度数据,并将左右极限点分别写入左右以Point命名的Mat中
+var2length(Var,length,mPointL,mPointR,thresvalue,widthvalue);
+
+                            if(speedfull){
+                                    // for (int speedp = 0; speedp < (framenum / 2); speedp++){
+                                     //for(int linep = 0;linep<linenum;linep++){
+                                     //nowtotalspeedL += speedp<=comcc?Speed[comcc-speedp][linep][0]:Speed[framenum+comcc-speedp][linep][0];
+                                     //nowtotalspeedR += speedp<=comcc?Speed[comcc-speedp][linep][1]:Speed[framenum+comcc-speedp][linep][1];
+                                     //lasttotalspeedL += speedp+comcc<framenum?Speed[comcc+speedp][linep][0]:Speed[comcc+speedp-framenum][linep][0];
+                                     //lasttotalspeedR += speedp+comcc<framenum?Speed[comcc+speedp][linep][1]:Speed[comcc+speedp-framenum][linep][1];
+                                     //}
+                                     //}
+                                     //if(nowtotalspeedL<500&&nowtotalspeedL>-500&&lasttotalspeedL<-2000)
+
+                                    Imgproc.fitLine(mPointL,mLineL,Imgproc.CV_DIST_L2,0, 0.01, 0.01);
+                                    Imgproc.fitLine(mPointR,mLineR,Imgproc.CV_DIST_L2,0, 0.01, 0.01);
+                                    linecacu = true;
+
+                                    int NP = mLineL.checkVector(1);
+                                    int height=mLineL.rows();
+                                    int widths = mLineL.cols();
+                                    int dim = mLineL.dims();
+                                    long DibWidth=mLineL.step1();
+                                    int channels=mLineL.channels();
+                                    long es = mLineL.elemSize();
+                                    long es1 = mLineL.elemSize1();
+
+                                    DisStrR = String.format("checkVector(2)=%d rows()=%d cols()=%d dims()=%d step1()=%d channels()=%d es=%d es1=%d",NP,height,widths,dim,(int)DibWidth,channels,(int)es,(int)es1);
+
+                                    consumingTime = System.currentTimeMillis() - startTime;//计算粗略的毫秒时间
+                                    //DisStrL = String.format("初始化数据完成 点数量 %d %d 线数量 %d %d",mPointL.checkVector(2),
+                                    //       mPointR.checkVector(2),mLineL.checkVector(1),mLineR.checkVector(1));
+                                    //DisStrR = String.format("等待帧填充时间%dms 帧处理时间%dms",sleeptime,(int)consumingTime);
+                                    }
+                                    else{
+                                    DisStrL = "分析数据中";
+                                    DisStrR = String.format("每帧处理耗时%dms",sleeptime);
+                                    }
+                                    } else {
+                                    Thread.sleep(100);
+                                    DisStrL = "初始化数据中";
+                                    }
+                                    handler.post(runnableL);
+                                    handler.post(runnableR);
+                                    }
+                                    catch (InterruptedException e) {
+                                    // TODO 自动生成的 catch 块
+                                    e.printStackTrace();
+                                    }
+                                    }
+                                    }
+                                    };
+                                    threadvar.start();
+                                    }
+
+@Override
+public void onCameraViewStopped() {
+        // TODO Auto-generated method stub
+        mRgba.release();
+        mGray.release();
+        }
+
+ // 图像处理都写在此处，未使用代码注释在ScreenOffAdminReceiver中
+
+@Override
+public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
+        mRgba = inputFrame.rgba();
+        Imgproc.cvtColor(mRgba, mGray, COLOR_BGR2GRAY);
+        int getn;
+        for(int rows = 0;rows<linenum;rows++) {
+        for (int i = 0; i < swid/2; i++) {
+        getn = mGray.get(rows*shei/(linenum*3), i+swid/4, lines[framecc][rows][i]);
+        if(getn==0){
+        DisStrR = "摄像头读取错误";
+        handler.post(runnableR);
+        break;
+        }
+        }
+        }
+        //设置framenum帧缓冲，下标framecc到framenum-1手动还原到0，并且在算法线程中将framecc作为同步指示器，检测到framecc更新则开始新一轮的计算
+        if(framecc>=(framenum-1)){
+        framecc = 0;
+        fillfull = true;//填充帧完成
+        }
+        else framecc++;
+        将方差数据以像素点的形式写入原始图像
+         //byte pointvar[] = new byte[4];
+         //pointvar[3] = (byte)1;
+         // pointvar[1] = 0;
+         //pointvar[2] = 0;
+
+         //将长度信息写入图像
+         for(int rows = 0;rows<linenum;rows++) {
+         for (int i = 0; i < length[rows][0]; i++) {
+         mGray.put(rows*shei/(linenum*3),swid/2-i-1,(byte)(128));
+         }
+         for (int i = 0; i < length[rows][1]; i++) {
+         mGray.put(rows*shei/(linenum*3),swid/2+i,(byte)(128));
+         }
+         }
+        if(linecacu) {
+        int N = mLineL.checkVector(1);
+        double linesLR[][][] = new double[2][4][1];
+        // Draw segments
+        for (int i = 0; i < N; ++i) {
+        //L = mLineL.get(i,0,linesLR[0][i]);
+        //R = mLineR.get(i, 0,linesLR[1][i]);
+        linesLR[0][i] = mLineL.get(i,0);
+        linesLR[1][i] = mLineR.get(i,0);
+        //line(mRgba, new Point(lines[0][0], lines[0][1]), new Point(lines[0][2], lines[0][3]), new Scalar(0, 255, 0), 2);
+        //line(mRgba, new Point(lines[1][0], lines[1][1]), new Point(lines[1][2], lines[1][3]), new Scalar(0, 255, 0), 2);
+        }
+        DisStrL = String.format("%g %g %g %g   %g %g %g %g ",linesLR[0][0][0],linesLR[0][1][0],linesLR[0][2][0],linesLR[0][3][0]
+        ,linesLR[1][0][0],linesLR[1][1][0],linesLR[1][2][0],linesLR[1][3][0]);
+        handler.post(runnableL);
+        }
+
+        if(linecacu) {
+            int N = mLineL.checkVector(1);
+            double linesLR[][][] = new double[2][4][1];
+            Point PLT,PLB,PRT,PRB;
+            // Draw segments
+            for (int i = 0; i < N; ++i) {
+                linesLR[0][i] = mLineL.get(i,0);
+                linesLR[1][i] = mLineR.get(i,0);
+            }
+            //由FitLine计算出来的二维Line具备4个float值，Vx Vy x0 y0，分别为 两个维度的直线向量与直线上某点坐标。
+            //其满足等式  (X-x0)/Vx = (Y-y0)/Vy
+            //当确定Y值时 X = x0 + (Y-y0)*Vx/Vy 特别当Y=0时 X = x0 - y0*Vx/Vy
+            PLT = new Point(linesLR[0][2][0]-linesLR[0][3][0]*linesLR[0][0][0]/linesLR[0][1][0],0);
+            PLB = new Point(linesLR[0][2][0]+((linenum-1)*shei/(linenum*3)-linesLR[0][3][0])*linesLR[0][0][0]/linesLR[0][1][0],(linenum-1)*shei/(linenum*3));
+            PRT = new Point(linesLR[1][2][0]-linesLR[1][3][0]*linesLR[1][0][0]/linesLR[1][1][0],0);
+            PRB = new Point(linesLR[1][2][0]+((linenum-1)*shei/(linenum*3)-linesLR[1][3][0])*linesLR[1][0][0]/linesLR[1][1][0],(linenum-1)*shei/(linenum*3));
+            line(mRgba, PLT, PLB, new Scalar(255, 0, 0), 2);
+            line(mRgba, PRT, PRB, new Scalar(0, 255, 0), 2);
+            line(mRgba, PLT, PRT, new Scalar(0, 0, 255), 2);
+            line(mRgba, PLB, PRB, new Scalar(0, 0, 255), 2);
+        }
+        return mRgba;//此处必须返回与控件相同分辨率的mat，否则无法显示。
+        }**/
