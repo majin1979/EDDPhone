@@ -49,12 +49,12 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
     //private int Speed[][][];
     private int framecc,cacucc,linenum,framenum,thresvalue,widthvalue;
     private int linexyc,PLRmin,LRreducemin,LRreducemax;
-    private int closecc,closehold;
-    private double closelast;
+    private int closecc,closehold,outtimeframe;
+    private double closelast,middlevalue,backvalue;
     private boolean fillfull,varpoint,haveline,linecacu,MiddleIdle;
     private long startTime,consumingTime;
     private TextView tvL,tvR;
-    private String DisStrL,DisStrR;
+    private String DisStrL,DisStrR,logtag;
     Point PLT,PLB,PRT,PRB;
     //创建一个Handle对象
     final Handler handler = new Handler();
@@ -106,7 +106,6 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
         mCVCamera.setCvCameraViewListener(this);
         // 打开USB摄像头 ID=0
         //mCVCamera.setCameraIndex(-1);
-
     }
     @Override
     public void onResume() {
@@ -200,10 +199,15 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
     @Override
     public void onCameraViewStarted(int width, int height) {
         //统一在此定义初始化参数
+        logtag = "EDDPhone";
         if(width==0||height==0) {
+            DisStrL = "UVC摄像头，固定分辨率640*480";
             width = 640;//USB摄像头需要自定义分辨率（画面宽高）
             height = 480;
         }
+        else DisStrL = String.format("原生摄像头，分辨率%d*%d",width,height);
+        Log.w(logtag,DisStrL);
+
         swid = width;//原生摄像头可以自动获取分辨率（画面宽高）
         shei = height;
         linenum = 10;//采样线的数量，居中水平横线，宽度为画面一半，纵坐标从top开始，至上方1/3处，均分。平衡性能和效率的参数。
@@ -211,9 +215,14 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
         thresvalue = 15;//方差的阀值，超过此值，则判定为实际变化。影响判定的重要参数。
         widthvalue = 20;//阀值的计算宽度，宽度的像素方差均值大于阀值，则判定为变化。影响判定的重要参数。
 
-        PLRmin = 100;
-        LRreducemin = 20;
-        LRreducemax = 200;
+        PLRmin = 100;//第一个左右边符合斜率的梯形的上下底和（因为高都相等，底和也就等同面积---比值相等）
+        LRreducemin = 20;//第二、第三帧的梯形底和与前一帧的差需要控制在阀值内，此为最小阀值。
+        LRreducemax = 200;//第二、第三帧的梯形底和与前一帧的差需要控制在阀值内，此为最大阀值。
+
+        outtimeframe = 100;//中缝对比时，当总帧数大于此阀值，则检测停止，流程返回到之前的关门初期探测。
+        middlevalue = 0.2;//中缝对比检测时，当对比值小于此阀值，则进入最终关门状态的连续三帧检测，如果大于，则进行递减检测。
+        backvalue = 0.1;//中缝对比检测进行递减检测时，考虑到误差和干扰，偶尔会有极小值的逆向递增现象出现，采用此阀值限定递增不能超过的区间。
+
         //参数定义结束
         //LSD = Imgproc.createLineSegmentDetector();
         mRgba = new Mat(height, width, CvType.CV_8UC4); //原始RGBA四通道图像（携带Alpha透明度信息的PNG图像）
@@ -248,14 +257,14 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                                 sleeptime++;
                             }
                             startTime = System.currentTimeMillis();//计算粗略的毫秒时间
-                            
+
                             deviation(lines, Var);//将lines中的像素数据计算出方差存入Var中。
                             /**将Var中的方差数据,根据上一帧长度length数据计算出中间相对阀值threshold的
                              //静止区域(超越宽度width)的增减速度，并将速度数据存入Speed的当前(十帧)的速度数据中。
                              //完成计算后，将length更新为新的数据。**/
                             //20190107 更改为计算中间相对阀值静止的长度数据,并将左右极限点分别写入左右以Point命名的Mat中
                             var2length(Var,length,mPointL,mPointR,thresvalue,widthvalue);
-                            
+
                             cacucc = framecc;//更新同步标志
                             if(cacucc == framenum-1){
                                 varpoint = true;//速度数据初始化完毕
@@ -325,7 +334,7 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                     linesLR[0][i] = mLineL.get(i, 0);
                     linesLR[1][i] = mLineR.get(i, 0);
                 }
-                if ((-0.5 < linesLR[0][0][0] / linesLR[0][1][0]) && (linesLR[0][0][0] / linesLR[0][1][0] < 1) && (0.5 > linesLR[1][0][0] / linesLR[1][1][0]) && (linesLR[1][0][0] / linesLR[1][1][0] > -1)) {
+                if ((-1 < linesLR[0][0][0] / linesLR[0][1][0]) && (linesLR[0][0][0] / linesLR[0][1][0] < 1) && (1 > linesLR[1][0][0] / linesLR[1][1][0]) && (linesLR[1][0][0] / linesLR[1][1][0] > -1)) {
                     //由FitLine计算出来的二维Line具备4个float值，Vx Vy x0 y0，分别为 两个维度的直线向量与直线上某点坐标。
                     //其满足等式  (X-x0)/Vx = (Y-y0)/Vy
                     //当确定Y值时 X = x0 + (Y-y0)*Vx/Vy 特别当Y=0时 X = x0 - y0*Vx/Vy
@@ -335,6 +344,7 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                     PRB = new Point(linesLR[1][2][0] + ((linenum - 1) * shei / (linenum * 3) - linesLR[1][3][0]) * linesLR[1][0][0] / linesLR[1][1][0], (linenum - 1) * shei / (linenum * 3));
                     haveline = true;
                     linexyc++;//符合斜率计数器累加
+                    DisStrL = "进入底和状态第一帧";
                 } else {
                     linexyc = 0;//符合斜率计数器清零
                 }
@@ -352,9 +362,11 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                         if (linexyc == 2) {
                             if (((areasize[0] - areasize[1]) < LRreducemin) || ((areasize[0] - areasize[1]) > LRreducemax)) {
                                 if (areasize[1] > PLRmin) {
+                                    DisStrL = "从底和状态第二帧回退到第一帧";
                                     areasize[0] = areasize[1];
                                     linexyc = 1;
                                 } else {
+                                    DisStrL = "从底和状态第二帧退出";
                                     linexyc = 0;
                                 }
                             }
@@ -363,9 +375,11 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                         if (linexyc == 3) {
                             if (((areasize[1] - areasize[2]) < LRreducemin) || ((areasize[1] - areasize[2]) > LRreducemax)) {
                                 if (areasize[2] > PLRmin) {
+                                    DisStrL = "从底和状态第三帧回退到第一帧";
                                     areasize[0] = areasize[2];
                                     linexyc = 1;
                                 } else {
+                                    DisStrL = "从底和状态第三帧退出";
                                     linexyc = 0;
                                 }
                             }
@@ -394,39 +408,39 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
             double closecom = Imgproc.compareHist(mROI, mclose, Imgproc.CV_COMP_CORREL);
             if(closecc>0) {
                 //从下一帧开始，到接近关门完成之前，如果出现逆差或者长时间不关门完成，则退出中缝对比。
-                if(closecom > 0.2){//大区间
-                    if(closecom-closelast>0.1||closecc>100) {//逆或超,其中涵盖了进入小区间累加不足3次又跳回大区间的情况=逆
-                        System.out.println("逆了或者超了");
+                if(closecom > middlevalue){//大区间
+                    if(closecom-closelast>backvalue||closecc>outtimeframe) {//逆或超,其中涵盖了进入小区间累加不足3次又跳回大区间的情况=逆
+                        DisStrL = "逆了或者超了";
                         MiddleIdle = true;
                     }
                     //不逆不超，继续下一帧
                 }
                 else{//小区间
                     if(closecc<3){//太短也不正常？
-                        System.out.println("太短帧数");
+                        DisStrL = "太短帧数";
                         MiddleIdle = true;
                     }
                     else{//等三次累加
-                        System.out.println("关门累加");
+                        DisStrL = "关门累加";
                         closehold++;
                     }
                     if(closehold>3){
                         MiddleIdle = true;
-                        System.out.println("门关闭");
-                        DisStrL = String.format("门已经关闭");
+                        DisStrL = "门已经关闭";
                     }
                 }
                 DisStrR = String.format("对比度:%g 中缝判断总帧数:%d 关门判断帧数:%d",closecom,closecc,closehold);
             }
             else{
-                DisStrR = String.format("进入中缝对比");
+                DisStrL = "进入中缝对比";
             }
-            System.out.println(DisStrR);
-            handler.post(runnableR);
             closelast = closecom;
             closecc++;
         }
+        Log.w(logtag,DisStrL);
+        Log.i(logtag,DisStrR);
         handler.post(runnableL);
+        handler.post(runnableR);
         return mRgba;//此处必须返回与控件相同分辨率的mat，否则无法显示。
     }
 }
